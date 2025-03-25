@@ -1,0 +1,16 @@
+
+CREATE DATABASE HelpDesk;
+USE helpdesk;
+
+CREATE TABLE Usuarios (
+    userid INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    password VARCHAR(100) NOT NULL
+);
+
+INSERT INTO usuarios (username, name, password) VALUES
+('jperez', 'Juan Perez', 'contrasena123'),
+('mlopez', 'Maria Lopez', 'claveSegura'),
+('cgarcia', 'Carlos Garcia', 'miPass2025'),
+('sfernandez', 'Sofia Fernandez', 'qwertyEsp');
