@@ -23,10 +23,10 @@ app.use((req, res, next) => {
 
 // Conexión a MySQL
 const db = mysql.createConnection({
-    host: "localhost",
-    user: "administrador",
-    password: "Admin50p0r73",
-    database: "mesa_ayuda"
+    host: "https://209.133.211.106",
+    user: "trilogit_admin",
+    password: "Admin50p0r73*",
+    database: "trilogit_helpdesk"
 });
 
 // Función para inicializar la base de datos
