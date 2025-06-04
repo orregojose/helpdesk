@@ -1,10 +1,25 @@
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
+const bcrypt = require("bcryptjs");
 
 const app = express();
-app.use(cors());
+
+// Configuración de CORS
+app.use(cors({
+    origin: 'http://localhost:3000',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
+}));
+
+// Middleware para parsear JSON
 app.use(express.json());
+
+// Middleware para loggear todas las peticiones
+app.use((req, res, next) => {
+    console.log(`📝 ${req.method} ${req.path} - Body:`, req.body);
+    next();
+});
 
 // Conexión a MySQL
 const db = mysql.createConnection({
@@ -14,135 +29,735 @@ const db = mysql.createConnection({
     database: "mesa_ayuda"
 });
 
-db.connect(err => {
+// Función para inicializar la base de datos
+const initializeDatabase = async () => {
+    try {
+        // Verificar y actualizar la estructura de la tabla usuarios
+        try {
+            const [userColumns] = await db.promise().query("SHOW COLUMNS FROM usuarios WHERE Field = 'rol'");
+            if (userColumns.length === 0) {
+                await db.promise().query(
+                    "ALTER TABLE usuarios ADD COLUMN rol VARCHAR(20) DEFAULT 'normal'"
+                );
+                console.log("✅ Columna 'rol' agregada a la tabla usuarios");
+            }
+        } catch (error) {
+            console.error("⚠️ Error al verificar/agregar columna rol:", error.message);
+        }
+
+        // Verificar y actualizar la estructura de la tabla tickets
+        const alterTicketsTableSQL = `
+            ALTER TABLE tickets 
+            MODIFY COLUMN usuario_id INT NULL,
+            DROP FOREIGN KEY tickets_ibfk_1,
+            ADD FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL;
+        `;
+        
+        try {
+            await db.promise().query(alterTicketsTableSQL);
+            console.log("✅ Tabla tickets actualizada para permitir tickets públicos");
+        } catch (error) {
+            console.error("⚠️ Error al modificar tabla tickets (puede ser normal si ya está modificada):", error.message);
+        }
+
+        // Crear tabla comentarios si no existe
+        const createComentariosSQL = `
+            CREATE TABLE IF NOT EXISTS comentarios (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                ticket_id INT NOT NULL,
+                usuario_id INT NOT NULL,
+                contenido TEXT NOT NULL,
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+                FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+            )
+        `;
+
+        await db.promise().query(createComentariosSQL);
+        console.log("✅ Tabla comentarios verificada/creada");
+
+        // Verificar estructura de usuario_id en tickets
+        const [ticketColumns] = await db.promise().query("SHOW COLUMNS FROM tickets WHERE Field = 'usuario_id'");
+        console.log("📋 Estructura de usuario_id en tickets:", ticketColumns[0]);
+
+        // Verificar si existe la tabla ticket_creadores
+        const [tables] = await db.promise().query("SHOW TABLES LIKE 'ticket_creadores'");
+        const ticketCreadoresExists = tables.length > 0;
+        console.log("📋 Tabla ticket_creadores existe:", ticketCreadoresExists);
+    } catch (error) {
+        console.error("❌ Error inicializando base de datos:", error);
+    }
+};
+
+// Conectar a MySQL e inicializar la base de datos
+db.connect(async err => {
     if (err) {
         console.error("❌ Error conectando a MySQL:", err);
+        process.exit(1);
     } else {
         console.log("✅ Conectado a MySQL");
+        await initializeDatabase();
     }
 });
 
-// Ruta para registrar usuarios
-app.post("/register", (req, res) => {
-    const { nombre, email, telefono, area, empresa, password } = req.body;
-
-    const sql = "INSERT INTO usuarios (nombre, email, telefono, area, empresa, password) VALUES (?, ?, ?, ?, ?, ?)";
-    db.query(sql, [nombre, email, telefono, area, empresa, password], (err, result) => {
-        if (err) {
-            console.error("❌ Error en la consulta SQL:", err); // ⬅ Ver mensaje exacto en terminal
-            res.status(500).send("❌ Error registrando usuario.");
-        } else {
-            console.log("✅ Usuario registrado correctamente:", result); // ⬅ Ver detalles si funciona
-            res.status(200).send("✅ Usuario registrado con éxito.");
-        }
-    });
+// Ruta de prueba
+app.get("/", (req, res) => {
+    res.json({ message: "API funcionando correctamente" });
 });
 
-app.post("/login", (req, res) => {
+// Ruta para login
+app.post("/login", async (req, res) => {
+    console.log("🔐 Intento de login recibido:", req.body);
     const { email, password } = req.body;
 
-    const sql = "SELECT * FROM usuarios WHERE email = ? AND password = ?";
-    db.query(sql, [email, password], (err, result) => {
-        if (err) {
-            console.error("❌ Error en la consulta SQL:", err);
-            res.status(500).send("❌ Error en el servidor.");
-        } else if (result.length > 0) {
-            res.status(200).json({ message: "✅ Inicio de sesión exitoso", usuario: result[0] });
-        } else {
-            res.status(401).send("❌ Credenciales incorrectas.");
+    try {
+        const [usuarios] = await db.promise().query(
+            "SELECT * FROM usuarios WHERE email = ?",
+            [email]
+        );
+
+        if (usuarios.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: "Correo electrónico o contraseña incorrectos"
+            });
         }
-    });
+
+        const usuario = usuarios[0];
+        const validPassword = await bcrypt.compare(password, usuario.password);
+
+        if (!validPassword) {
+            return res.status(401).json({
+                success: false,
+                message: "Correo electrónico o contraseña incorrectos"
+            });
+        }
+
+        const { password: _, ...usuarioSinPassword } = usuario;
+        console.log("✅ Login exitoso para:", email);
+        
+        res.status(200).json({
+            success: true,
+            message: "Login exitoso",
+            usuario: usuarioSinPassword
+        });
+    } catch (error) {
+        console.error("❌ Error en login:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al iniciar sesión"
+        });
+    }
 });
 
-app.post("/register-ticket", (req, res) => {
+// Ruta para registro de usuarios
+app.post("/register", async (req, res) => {
+    const { nombre, email, telefono, area, empresa, password } = req.body;
+
+    try {
+        // Verificar si el email ya existe
+        const [existingUser] = await db.promise().query(
+            "SELECT id FROM usuarios WHERE email = ?",
+            [email]
+        );
+
+        if (existingUser.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: "El correo electrónico ya está registrado"
+            });
+        }
+
+        // Encriptar la contraseña
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        // Insertar nuevo usuario con rol 'normal' por defecto
+        const [result] = await db.promise().query(
+            `INSERT INTO usuarios (nombre, email, telefono, area, empresa, password, rol) 
+             VALUES (?, ?, ?, ?, ?, ?, 'normal')`,
+            [nombre, email, telefono, area, empresa, hashedPassword]
+        );
+
+        // Obtener el usuario recién creado (sin la contraseña)
+        const [newUser] = await db.promise().query(
+            "SELECT id, nombre, email, telefono, area, empresa, rol FROM usuarios WHERE id = ?",
+            [result.insertId]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Usuario registrado exitosamente",
+            usuario: newUser[0]
+        });
+    } catch (error) {
+        console.error("❌ Error en registro:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al registrar usuario"
+        });
+    }
+});
+
+// Ruta para obtener tickets
+app.get("/tickets", async (req, res) => {
+    const userId = req.headers['user-id'];
+    console.log("🎫 Obteniendo tickets para usuario:", userId);
+    
+    try {
+        const [user] = await db.promise().query(
+            "SELECT rol FROM usuarios WHERE id = ?",
+            [userId]
+        );
+
+        if (!user.length) {
+            return res.status(401).json({
+                success: false,
+                message: "Usuario no autorizado"
+            });
+        }
+
+        // Consulta modificada para obtener nombre y email del creador
+        let query = `
+            SELECT 
+                t.*,
+                COALESCE(u.nombre, 'Usuario Eliminado') as creador,
+                COALESCE(u.email, 'N/A') as email_creador
+            FROM tickets t
+            LEFT JOIN usuarios u ON t.usuario_id = u.id
+        `;
+
+        if (user[0].rol === 'normal') {
+            query += " WHERE t.usuario_id = ?";
+        }
+
+        query += " ORDER BY t.fecha_creacion DESC";
+
+        console.log("🔍 Ejecutando consulta:", query);
+        const [tickets] = await db.promise().query(
+            query,
+            user[0].rol === 'normal' ? [userId] : []
+        );
+
+        // Log para depuración
+        console.log("✅ Primer ticket de ejemplo:", tickets[0]);
+        console.log(`✅ Se encontraron ${tickets.length} tickets`);
+        
+        res.json(tickets);
+    } catch (error) {
+        console.error("❌ Error al obtener tickets:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al obtener tickets"
+        });
+    }
+});
+
+// Ruta para obtener detalles de un ticket específico
+app.get("/ticket/:id", async (req, res) => {
+    const { id } = req.params;
+    const userId = req.headers['user-id'];
+
+    try {
+        // Primero verificamos si el usuario tiene acceso al ticket
+        const [user] = await db.promise().query(
+            "SELECT rol FROM usuarios WHERE id = ?",
+            [userId]
+        );
+
+        if (!user.length) {
+            return res.status(401).json({
+                success: false,
+                message: "Usuario no autorizado"
+            });
+        }
+
+        // Consulta para obtener los detalles del ticket
+        let query = `
+            SELECT t.*, 
+                   u.nombre as creador, 
+                   u.email as email_creador
+            FROM tickets t
+            LEFT JOIN usuarios u ON t.usuario_id = u.id
+            WHERE t.id = ?
+        `;
+
+        // Si el usuario es normal, verificamos que sea el propietario del ticket
+        if (user[0].rol === 'normal') {
+            query = `
+                SELECT t.*, 
+                       u.nombre as creador, 
+                       u.email as email_creador
+                FROM tickets t
+                LEFT JOIN usuarios u ON t.usuario_id = u.id
+                WHERE t.id = ? AND (t.usuario_id = ? OR t.usuario_id IS NULL)
+            `;
+        }
+
+        const [ticket] = await db.promise().query(
+            query,
+            user[0].rol === 'normal' ? [id, userId] : [id]
+        );
+
+        if (!ticket.length) {
+            return res.status(404).json({
+                success: false,
+                message: "Ticket no encontrado o no tienes permiso para verlo"
+            });
+        }
+
+        // Obtener comentarios del ticket
+        const [comentarios] = await db.promise().query(
+            `SELECT c.*, u.nombre as nombre_usuario, u.email as email_usuario
+             FROM comentarios c
+             LEFT JOIN usuarios u ON c.usuario_id = u.id
+             WHERE c.ticket_id = ?
+             ORDER BY c.fecha_creacion DESC`,
+            [id]
+        );
+
+        // Combinar ticket con sus comentarios
+        const ticketConComentarios = {
+            ...ticket[0],
+            comentarios
+        };
+
+        res.json(ticketConComentarios);
+    } catch (error) {
+        console.error("❌ Error al obtener detalles del ticket:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al obtener detalles del ticket"
+        });
+    }
+});
+
+// Ruta para registrar un nuevo ticket
+app.post("/register-ticket", async (req, res) => {
     const { usuario_id, titulo, descripcion } = req.body;
 
-    const sql = "INSERT INTO tickets (usuario_id, titulo, descripcion) VALUES (?, ?, ?)";
-    db.query(sql, [usuario_id, titulo, descripcion], (err, result) => {
-        if (err) {
-            console.error("❌ Error en la consulta SQL:", err);
-            res.status(500).send("❌ Error registrando ticket.");
-        } else {
-            res.status(200).send("✅ Ticket registrado correctamente.");
-        }
-    });
+    try {
+        // Generar número de ticket
+        const [lastTicket] = await db.promise().query(
+            "SELECT MAX(CAST(SUBSTRING(ticket_number, 2) AS UNSIGNED)) as last_number FROM tickets WHERE ticket_number IS NOT NULL"
+        );
+        const nextNumber = (lastTicket[0].last_number || 0) + 1;
+        const ticketNumber = `T${String(nextNumber).padStart(6, '0')}`;
+
+        // Insertar el ticket solo con el número generado
+        const [result] = await db.promise().query(
+            "INSERT INTO tickets (usuario_id, titulo, descripcion, estado, ticket_number) VALUES (?, ?, ?, 'Abierto', ?)",
+            [usuario_id, titulo, descripcion, ticketNumber]
+        );
+
+        res.status(200).json({
+            success: true,
+            message: "Ticket creado exitosamente",
+            ticketId: result.insertId,
+            ticketNumber
+        });
+    } catch (error) {
+        console.error("❌ Error al crear ticket:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al crear el ticket"
+        });
+    }
 });
 
-app.get("/tickets", (req, res) => {
-    const sql = `
-        SELECT tickets.id, tickets.titulo, tickets.descripcion, tickets.estado, tickets.fecha_creacion, 
-               usuarios.nombre AS creador 
-        FROM tickets 
-        JOIN usuarios ON tickets.usuario_id = usuarios.id`;
-    
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("❌ Error obteniendo tickets:", err);
-            res.status(500).send("❌ Error al obtener tickets.");
+// Ruta para tickets públicos
+app.post("/public-ticket", async (req, res) => {
+    const { nombre, email, titulo, descripcion, password } = req.body;
+
+    try {
+        // Verificar si el usuario ya existe
+        const [existingUser] = await db.promise().query(
+            "SELECT * FROM usuarios WHERE email = ?",
+            [email]
+        );
+
+        let userId;
+
+        // Si el usuario no existe, crearlo
+        if (existingUser.length === 0) {
+            // Encriptar la contraseña
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+
+            // Crear el nuevo usuario
+            const [newUser] = await db.promise().query(
+                `INSERT INTO usuarios (nombre, email, password, rol, telefono, area, empresa) 
+                 VALUES (?, ?, ?, 'normal', '', '', '')`,
+                [nombre, email, hashedPassword]
+            );
+            userId = newUser.insertId;
         } else {
-            res.status(200).json(result);
+            userId = existingUser[0].id;
         }
-    });
+
+        // Generar número de ticket
+        const [lastTicket] = await db.promise().query(
+            "SELECT MAX(CAST(SUBSTRING(ticket_number, 2) AS UNSIGNED)) as last_number FROM tickets WHERE ticket_number IS NOT NULL"
+        );
+        const nextNumber = (lastTicket[0].last_number || 0) + 1;
+        const ticketNumber = `T${String(nextNumber).padStart(6, '0')}`;
+
+        // Crear el ticket
+        const [result] = await db.promise().query(
+            "INSERT INTO tickets (usuario_id, titulo, descripcion, estado, ticket_number) VALUES (?, ?, ?, 'Abierto', ?)",
+            [userId, titulo, descripcion, ticketNumber]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Ticket creado exitosamente",
+            ticketNumber,
+            userCreated: existingUser.length === 0
+        });
+    } catch (error) {
+        console.error("❌ Error al crear ticket público:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al crear el ticket"
+        });
+    }
 });
 
-
-app.put("/update-ticket", (req, res) => {
+// Ruta para actualizar el estado de un ticket
+app.put("/update-ticket", async (req, res) => {
     const { id, estado } = req.body;
+    const userId = req.headers['user-id'];
 
-    const sql = "UPDATE tickets SET estado = ? WHERE id = ?";
-    db.query(sql, [estado, id], (err, result) => {
-        if (err) {
-            console.error("❌ Error actualizando ticket:", err);
-            res.status(500).send("❌ Error al actualizar ticket.");
-        } else {
-            res.status(200).send("✅ Estado del ticket actualizado.");
+    try {
+        const [user] = await db.promise().query(
+            "SELECT rol FROM usuarios WHERE id = ?",
+            [userId]
+        );
+
+        if (!user.length || (user[0].rol !== 'administrador' && user[0].rol !== 'soporte')) {
+            return res.status(403).json({
+                success: false,
+                message: "No tiene permisos para actualizar tickets"
+            });
         }
-    });
+
+        await db.promise().query(
+            "UPDATE tickets SET estado = ? WHERE id = ?",
+            [estado, id]
+        );
+
+        res.json({
+            success: true,
+            message: "Estado del ticket actualizado"
+        });
+    } catch (error) {
+        console.error("❌ Error al actualizar ticket:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al actualizar el ticket"
+        });
+    }
 });
 
-app.get("/ticket-stats", (req, res) => {
-    const sql = "SELECT estado, COUNT(*) as cantidad FROM tickets GROUP BY estado";
-    
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("❌ Error obteniendo estadísticas:", err);
-            res.status(500).send("❌ Error al generar informe.");
-        } else {
-            res.status(200).json(result);
-        }
-    });
-});
-
-app.get("/user/:id", (req, res) => {
+// Ruta para obtener datos de un usuario
+app.get("/user/:id", async (req, res) => {
     const { id } = req.params;
-    const sql = "SELECT nombre, email, telefono, empresa, area FROM usuarios WHERE id = ?";
-    
-    db.query(sql, [id], (err, result) => {
-        if (err) {
-            console.error("❌ Error obteniendo usuario:", err);
-            res.status(500).send("❌ Error al cargar perfil.");
-        } else {
-            res.status(200).json(result[0]);
+
+    try {
+        const [user] = await db.promise().query(
+            "SELECT id, nombre, email, telefono, area, empresa, rol FROM usuarios WHERE id = ?",
+            [id]
+        );
+
+        if (!user.length) {
+            return res.status(404).json({
+                success: false,
+                message: "Usuario no encontrado"
+            });
         }
-    });
+
+        res.json(user[0]);
+    } catch (error) {
+        console.error("❌ Error al obtener usuario:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al obtener datos del usuario"
+        });
+    }
 });
 
-app.put("/update-user", (req, res) => {
+// Ruta para obtener estadísticas de tickets
+app.get("/ticket-stats", async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                estado,
+                COUNT(*) as cantidad
+            FROM tickets
+            GROUP BY estado
+            ORDER BY 
+                CASE estado
+                    WHEN 'Abierto' THEN 1
+                    WHEN 'En proceso' THEN 2
+                    WHEN 'Resuelto' THEN 3
+                    WHEN 'Cerrado' THEN 4
+                    ELSE 5
+                END
+        `;
+
+        const [results] = await db.promise().query(query);
+        console.log("📊 Estadísticas de tickets:", results);
+        res.json(results);
+    } catch (error) {
+        console.error("❌ Error obteniendo estadísticas:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al obtener estadísticas de tickets"
+        });
+    }
+});
+
+// Ruta para actualizar usuario
+app.put("/update-user", async (req, res) => {
     const { id, nombre, telefono, empresa, area } = req.body;
     
-    const sql = "UPDATE usuarios SET nombre = ?, telefono = ?, empresa = ?, area = ? WHERE id = ?";
-    
-    db.query(sql, [nombre, telefono, empresa, area, id], (err, result) => {
-        if (err) {
-            console.error("❌ Error actualizando perfil:", err);
-            res.status(500).send("❌ Error al actualizar perfil.");
-        } else {
-            res.status(200).send("✅ Perfil actualizado correctamente.");
+    try {
+        // Verificar si el usuario existe
+        const [existingUser] = await db.promise().query(
+            "SELECT id FROM usuarios WHERE id = ?",
+            [id]
+        );
+
+        if (existingUser.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Usuario no encontrado"
+            });
         }
+
+        // Actualizar usuario
+        await db.promise().query(
+            `UPDATE usuarios 
+             SET nombre = ?, telefono = ?, empresa = ?, area = ?
+             WHERE id = ?`,
+            [nombre, telefono, empresa, area, id]
+        );
+
+        // Obtener usuario actualizado
+        const [updatedUser] = await db.promise().query(
+            "SELECT id, nombre, email, telefono, area, empresa, rol FROM usuarios WHERE id = ?",
+            [id]
+        );
+
+        res.json({
+            success: true,
+            message: "Usuario actualizado exitosamente",
+            usuario: updatedUser[0]
+        });
+    } catch (error) {
+        console.error("❌ Error actualizando usuario:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al actualizar usuario"
+        });
+    }
+});
+
+// Middleware para verificar rol de administrador
+const checkAdminRole = async (req, res, next) => {
+    const userId = req.headers['user-id'];
+    if (!userId) {
+        return res.status(401).json({
+            success: false,
+            message: "No autorizado"
+        });
+    }
+
+    try {
+        const [user] = await db.promise().query(
+            "SELECT rol FROM usuarios WHERE id = ?",
+            [userId]
+        );
+
+        if (!user.length || user[0].rol !== 'administrador') {
+            return res.status(403).json({
+                success: false,
+                message: "Acceso denegado. Se requiere rol de administrador"
+            });
+        }
+
+        next();
+    } catch (error) {
+        console.error("❌ Error verificando rol:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al verificar permisos"
+        });
+    }
+};
+
+// Middleware para verificar rol de soporte o administrador
+const checkSupportRole = async (req, res, next) => {
+    const userId = req.headers['user-id'];
+    if (!userId) {
+        return res.status(401).json({
+            success: false,
+            message: "No autorizado"
+        });
+    }
+
+    try {
+        const [user] = await db.promise().query(
+            "SELECT rol FROM usuarios WHERE id = ?",
+            [userId]
+        );
+
+        if (!user.length || (user[0].rol !== 'administrador' && user[0].rol !== 'soporte')) {
+            return res.status(403).json({
+                success: false,
+                message: "Acceso denegado. Se requiere rol de soporte o administrador"
+            });
+        }
+
+        next();
+    } catch (error) {
+        console.error("❌ Error verificando rol:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al verificar permisos"
+        });
+    }
+};
+
+// Ruta para obtener todos los usuarios
+app.get("/get-all-users", checkSupportRole, async (req, res) => {
+    try {
+        const [users] = await db.promise().query(
+            "SELECT id, nombre, email, telefono, area, empresa, rol FROM usuarios"
+        );
+        
+        console.log(`✅ Se encontraron ${users.length} usuarios`);
+        res.json(users);
+    } catch (error) {
+        console.error("❌ Error obteniendo usuarios:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al obtener la lista de usuarios"
+        });
+    }
+});
+
+// Ruta para cambiar el rol de un usuario
+app.put("/update-user-role", checkAdminRole, async (req, res) => {
+    const { userId, newRole } = req.body;
+    
+    if (!['administrador', 'soporte', 'normal'].includes(newRole)) {
+        return res.status(400).json({
+            success: false,
+            message: "Rol inválido"
+        });
+    }
+
+    try {
+        await db.promise().query(
+            "UPDATE usuarios SET rol = ? WHERE id = ?",
+            [newRole, userId]
+        );
+
+        res.json({
+            success: true,
+            message: "Rol actualizado correctamente"
+        });
+    } catch (error) {
+        console.error("❌ Error actualizando rol:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al actualizar rol"
+        });
+    }
+});
+
+// Ruta para eliminar usuario
+app.delete("/delete-user/:id", checkAdminRole, async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        await db.promise().query(
+            "DELETE FROM usuarios WHERE id = ?",
+            [id]
+        );
+
+        res.json({
+            success: true,
+            message: "Usuario eliminado correctamente"
+        });
+    } catch (error) {
+        console.error("❌ Error eliminando usuario:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al eliminar usuario"
+        });
+    }
+});
+
+// Ruta para agregar comentario a un ticket
+app.post("/ticket/:id/comentario", async (req, res) => {
+    const { id } = req.params;
+    const { usuario_id, contenido } = req.body;
+
+    try {
+        // Verificar si el ticket existe
+        const [ticket] = await db.promise().query(
+            "SELECT id FROM tickets WHERE id = ?",
+            [id]
+        );
+
+        if (ticket.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Ticket no encontrado"
+            });
+        }
+
+        // Insertar el comentario
+        const [result] = await db.promise().query(
+            "INSERT INTO comentarios (ticket_id, usuario_id, contenido) VALUES (?, ?, ?)",
+            [id, usuario_id, contenido]
+        );
+
+        // Obtener el comentario recién creado con la información del usuario
+        const [comentario] = await db.promise().query(
+            `SELECT c.*, u.nombre as nombre_usuario, u.email as email_usuario
+             FROM comentarios c
+             LEFT JOIN usuarios u ON c.usuario_id = u.id
+             WHERE c.id = ?`,
+            [result.insertId]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Comentario agregado exitosamente",
+            comentario: comentario[0]
+        });
+    } catch (error) {
+        console.error("❌ Error al agregar comentario:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error al agregar el comentario"
+        });
+    }
+});
+
+// Manejador de errores 404 para rutas no encontradas
+app.use((req, res) => {
+    console.log("❌ Ruta no encontrada:", req.path);
+    res.status(404).json({
+        success: false,
+        message: "Ruta no encontrada"
     });
 });
 
-
+// Iniciar el servidor
 app.listen(3001, () => {
     console.log("🚀 Servidor corriendo en puerto 3001");
 });

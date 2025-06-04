@@ -2,51 +2,87 @@ import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import "./style.css";
+import Sidebar from "../components/Sidebar";
 
 const RegisterTicket = () => {
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
   
   const usuario = JSON.parse(sessionStorage.getItem("usuario"));
 
+  // Redirigir si no hay usuario autenticado
+  if (!usuario) {
+    navigate("/");
+    return null;
+  }
+
   const handleTicketSubmit = async (e) => {
     e.preventDefault();
+    setIsLoading(true);
+    setError("");
 
     try {
       const response = await axios.post("http://localhost:3001/register-ticket", {
-        usuario_id: usuario.id, titulo, descripcion
+        usuario_id: usuario.id,
+        titulo,
+        descripcion
       });
 
-      alert(response.data);
-      navigate("/dashboard");
+      if (response.data.success) {
+        alert("✅ " + response.data.message);
+        navigate("/consultar-tickets");
+      } else {
+        setError(response.data.message || "Error al crear el ticket");
+      }
     } catch (error) {
       console.error("❌ Error registrando ticket:", error);
-      alert("❌ Error al crear el ticket.");
+      setError(error.response?.data?.message || "Error al crear el ticket");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="dashboard-layout"> {/* Mantiene el diseño con el menú lateral */}
-      <aside className="sidebar">
-        <h3>📌 Mesa de Ayuda</h3>
-        <ul>
-          <li onClick={() => navigate("/dashboard")}>🏠 Inicio</li>
-          <li onClick={() => navigate("/profile")}>🙍‍♂️ Mi Perfil</li>
-          <li onClick={() => navigate("/register-ticket")}>📝 Registrar Ticket</li>
-          <li onClick={() => navigate("/consult-tickets")}>🔎 Consultar Tickets</li>
-            <li onClick={() => navigate("/report")}>📊 Informe de Tickets</li>
-          <li onClick={() => { sessionStorage.removeItem("usuario"); navigate("/"); }}>🚪 Cerrar Sesión</li>
-        </ul>
-      </aside>
-
+    <div className="dashboard-layout">
+      <Sidebar />
       <main className="dashboard-content">
         <h2>🎫 Registrar Nuevo Ticket</h2>
-        <form onSubmit={handleTicketSubmit} className="form-container">
-          <input type="text" placeholder="Título del problema" value={titulo} onChange={(e) => setTitulo(e.target.value)} required />
-          <textarea placeholder="Describe el problema..." value={descripcion} onChange={(e) => setDescripcion(e.target.value)} required></textarea>
-          <button type="submit">Enviar Ticket</button>
-        </form>
+        <div className="form-container">
+          <h3>Nuevo Ticket de Soporte</h3>
+          {error && <div className="error-message">{error}</div>}
+          <form onSubmit={handleTicketSubmit}>
+            <div className="form-group">
+              <label htmlFor="titulo">Título del Problema</label>
+              <input 
+                type="text" 
+                id="titulo"
+                placeholder="Ej: Error al iniciar sesión" 
+                value={titulo} 
+                onChange={(e) => setTitulo(e.target.value)} 
+                required 
+                disabled={isLoading}
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="descripcion">Descripción Detallada</label>
+              <textarea 
+                id="descripcion"
+                placeholder="Describe el problema detalladamente..." 
+                value={descripcion} 
+                onChange={(e) => setDescripcion(e.target.value)} 
+                required
+                rows="6"
+                disabled={isLoading}
+              ></textarea>
+            </div>
+            <button type="submit" disabled={isLoading}>
+              {isLoading ? "Enviando..." : "✉️ Enviar Ticket"}
+            </button>
+          </form>
+        </div>
       </main>
     </div>
   );

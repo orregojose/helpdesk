@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Diagramas de Navegación - Mesa de Ayuda</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: white;
+        }
+        .diagram-container {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #1976d2;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1976d2;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #1976d2;
+            border-bottom: 2px solid #1976d2;
+            padding-bottom: 10px;
+        }
+        button {
+            margin: 10px;
+            padding: 8px 16px;
+            background-color: #1976d2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #1565c0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Diagramas de Navegación - Sistema Mesa de Ayuda</h1>
+
+    <div class="diagram-container">
+        <h2>Estructura General</h2>
+        <div class="mermaid">
+            graph TD
+                A[Inicio] --> B[Login]
+                A --> C[Registro]
+                B --> D[Dashboard]
+                D --> E[Perfil]
+                D --> F[Tickets]
+                D --> G[Notificaciones]
+                F --> H[Crear Ticket]
+                F --> I[Ver Tickets]
+                F --> J[Detalle Ticket]
+                J --> K[Comentarios]
+                J --> L[Actualizar Estado]
+        </div>
+    </div>
+
+    <div class="diagram-container">
+        <h2>Navegación - Usuario Normal</h2>
+        <div class="mermaid">
+            graph TD
+                A[Dashboard Usuario] --> B[Mi Perfil]
+                A --> C[Mis Tickets]
+                A --> D[Notificaciones]
+                C --> E[Nuevo Ticket]
+                C --> F[Lista de Tickets]
+                C --> G[Buscar Ticket]
+                F --> H[Ver Detalle]
+                H --> I[Añadir Comentario]
+                H --> J[Ver Estado]
+        </div>
+    </div>
+
+    <div class="diagram-container">
+        <h2>Navegación - Soporte</h2>
+        <div class="mermaid">
+            graph TD
+                A[Dashboard Soporte] --> B[Tickets Asignados]
+                A --> C[Tickets Pendientes]
+                A --> D[Reportes]
+                B --> E[Ver Detalle]
+                E --> F[Actualizar Estado]
+                E --> G[Responder]
+                E --> H[Asignar]
+                D --> I[Estadísticas]
+                D --> J[Rendimiento]
+        </div>
+    </div>
+
+    <div class="diagram-container">
+        <h2>Navegación - Administrador</h2>
+        <div class="mermaid">
+            graph TD
+                A[Dashboard Admin] --> B[Gestión Usuarios]
+                A --> C[Gestión Tickets]
+                A --> D[Configuración]
+                A --> E[Reportes]
+                B --> F[Crear Usuario]
+                B --> G[Editar Usuario]
+                B --> H[Asignar Roles]
+                C --> I[Todos los Tickets]
+                C --> J[Tickets por Estado]
+                E --> K[Estadísticas]
+                E --> L[Métricas]
+                E --> M[Exportar]
+        </div>
+    </div>
+
+    <div class="diagram-container">
+        <h2>Flujo de Creación de Ticket</h2>
+        <div class="mermaid">
+            sequenceDiagram
+                participant U as Usuario
+                participant S as Sistema
+                participant ST as Soporte
+                U->>S: Inicia Sesión
+                S->>U: Muestra Dashboard
+                U->>S: Crea Nuevo Ticket
+                S->>ST: Notifica Nuevo Ticket
+                ST->>S: Asigna Ticket
+                S->>U: Notifica Asignación
+        </div>
+    </div>
+
+    <div class="diagram-container">
+        <h2>Flujo de Atención de Ticket</h2>
+        <div class="mermaid">
+            sequenceDiagram
+                participant U as Usuario
+                participant S as Sistema
+                participant ST as Soporte
+                ST->>S: Ve Lista de Tickets
+                ST->>S: Selecciona Ticket
+                S->>ST: Muestra Detalles
+                ST->>S: Actualiza Estado
+                S->>U: Notifica Cambio
+                U->>S: Ve Actualización
+        </div>
+    </div>
+
+    <div class="diagram-container">
+        <h2>Elementos de Navegación Persistentes</h2>
+        <div class="mermaid">
+            graph TD
+                A[Header] --> B[Logo]
+                A --> C[Buscador]
+                A --> D[Notificaciones]
+                A --> E[Perfil]
+                F[Sidebar] --> G[Menú Principal]
+                F --> H[Accesos Rápidos]
+                F --> I[Estado Sistema]
+                J[Footer] --> K[Ayuda]
+                J --> L[Contacto]
+                J --> M[Versión]
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'base',
+            themeVariables: {
+                'primaryColor': '#1976d2',
+                'primaryTextColor': '#ffffff',
+                'primaryBorderColor': '#1565c0',
+                'lineColor': '#1976d2',
+                'secondaryColor': '#90caf9',
+                'tertiaryColor': '#bbdefb',
+                'fontFamily': 'Arial',
+                'fontSize': '16px'
+            },
+            flowchart: {
+                curve: 'basis',
+                nodeSpacing: 50,
+                rankSpacing: 50,
+                useMaxWidth: true
+            },
+            sequence: {
+                mirrorActors: false,
+                bottomMarginAdj: 10,
+                boxMargin: 10,
+                noteMargin: 10,
+                messageMargin: 35,
+                boxTextMargin: 5,
+                width: 150
+            }
+        });
+
+        setTimeout(() => {
+            document.querySelectorAll('.diagram-container').forEach((container, index) => {
+                html2canvas(container, {
+                    backgroundColor: '#ffffff',
+                    scale: 2,
+                    useCORS: true
+                }).then(canvas => {
+                    const link = document.createElement('a');
+                    link.download = `diagrama_${index + 1}.jpg`;
+                    link.href = canvas.toDataURL('image/jpeg', 1.0);
+                    const button = document.createElement('button');
+                    button.textContent = `Descargar Diagrama ${index + 1}`;
+                    button.onclick = () => link.click();
+                    container.appendChild(button);
+                });
+            });
+        }, 2000);
+    </script>
+</body>
+</html> 
